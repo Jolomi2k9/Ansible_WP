@@ -1,0 +1,16 @@
+
+- hosts: localhost
+	  gather_facts: false
+	  vars_files:
+	          - vars.yml
+	  tasks:
+      - ec2_vpc_net:
+	        name: 3Tvpc
+          cidr_block: 10.0.0.0/16
+          region: eu-west-1
+          tags:
+            name: 3Tvpc
+          aws_secret_key: "{{ aws_secret_key }}"
+          aws_access_key: "{{ aws_access_key }}"
+        register: vpc
+	                    
