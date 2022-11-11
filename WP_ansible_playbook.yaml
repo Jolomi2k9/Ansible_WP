@@ -1,4 +1,4 @@
-
+#create vpc
 - hosts: localhost
 	  gather_facts: false
 	  vars_files:
@@ -13,4 +13,198 @@
           aws_secret_key: "{{ aws_secret_key }}"
           aws_access_key: "{{ aws_access_key }}"
         register: vpc
-	                    
+      #create public subnet
+      - ec2_vpc_subnet:
+          state: present
+          vpc_id: "{{ vpc.vpc.id }}"  
+          az: eu-west-1a
+          cidr: 10.0.1.0/24
+          map_public: yes
+          tags:
+              Name: WebApp1
+          region: eu-west-1
+          aws_secret_key: "{{ aws_secret_key }}"    
+          aws_access_key: "{{ aws_access_key }}"
+        register: PublicSubnet1
+      #create private subnet
+      - ec2_vpc_subnet:
+          state: present
+          vpc_id: "{{ vpc.vpc.id }}"  
+          az: eu-west-1b
+          cidr: 10.0.2.0/24
+          map_public: yes
+          tags:
+              Name: WebApp1
+          region: eu-west-1
+          aws_secret_key: "{{ aws_secret_key }}"    
+          aws_access_key: "{{ aws_access_key }}"
+        register: PrivateSubnet1
+
+      #create internet gateway                    
+      - ec2_vpc_igw:
+          vpc_id: "{{ vpc.vpc.id }}"
+          state: present
+          tags:
+              Name: myIGW
+          region: eu-west-1
+          aws_secret_key: "{{ aws_secret_key }}"    
+          aws_access_key: "{{ aws_access_key }}"
+        register: igw
+
+      #create route table for igw 
+      - ec2_vpc_route_table:
+          vpc_id: "{{ vpc.vpc.id }}"
+          tags:
+              Name: rt_igw
+          subnets:
+              - "{{ PublicSubnet1.subnet.id }}"
+          routes:
+              - dest: 0.0.0.0/0
+              gateway_id: "{{ igw.gateway_id }}"
+          region: eu-west-1
+          aws_secret_key: "{{ aws_secret_key }}"    
+          aws_access_key: "{{ aws_access_key }}"
+        register: route_table_igw
+
+      #create ec2 key pair so we can connect to instances
+      - ec2_key:
+            name: vpcKey
+            region: eu-west-1
+            aws_secret_key: "{{ aws_secret_key }}"    
+            aws_access_key: "{{ aws_access_key }}"
+        register: keypair
+      - copy:
+            content: "{{ keypair.key.private_key }}"
+            dest: "vpcKey.pem"
+        when: keypair.changed == true 
+
+      #create security groups for out Database
+      - ec2_group:
+            name: DB_sg
+            description: security group for RDS database
+            vpc_id: "{{ vpc.vpc.id }}"
+            region: eu-west-1
+            aws_secret_key: "{{ aws_secret_key }}"    
+            aws_access_key: "{{ aws_access_key }}"
+            rules:
+              - proto: tcp
+                ports:
+                  - 3306
+                cidr_ip: 10.0.0.0/16
+        register: db_sg
+
+      #create security group for webapp servers
+      - ec2_group:
+          name: webapp_sg
+          description: security group for webapp
+          vpc_id: "{{ vpc.vpc.id }}"
+          region: eu-west-1
+          aws_secret_key: "{{ aws_secret_key }}"    
+          aws_access_key: "{{ aws_access_key }}"
+          rules:
+            - proto: tcp
+              ports:
+                - 80
+              cidr_ip: 0.0.0.0/0
+            - proto: tcp
+              ports:
+                - 22
+              cidr_ip: 0.0.0.0/0
+        register: webapp_sg
+
+      #create DB subnet group
+      - rds_subnet_group:
+          state: present
+          name: "db_subnet_gp"
+          description: Subnet group for DB
+          subnets:
+                - "{{ PrivateSubnet1.subnet.id }}"
+                - "{{ PublicSubnet1.subnet.id }}"
+          region: eu-west-1
+          aws_secret_key: "{{ aws_secret_key }}"    
+          aws_access_key: "{{ aws_access_key }}"
+        register: subnet_group
+
+      #launching RDS in private subnet
+      - rds:
+          command: create
+          instance_name: mysqlOS
+          db_engine: MySQL
+          db_name: "{{ db_name }}"
+          engine_version: 5.7.31
+          size: 10
+          instance_type: db.t2.micro
+          vpc_security_groups: "{{ db_sg.group_id }}"
+          subanet: db_subnet_gp
+          zone: eu-west-1b
+          username: "{{ db_user }}" 
+          password: "{{ db_password }}"
+          wait: yes
+          wait_timeout: 600
+          tags:
+            Environment: testing
+          region: eu-west-1
+          aws_secret_key: "{{ aws_secret_key }}"    
+          aws_access_key: "{{ aws_access_key }}"
+        register: db_rds
+
+      -debug:
+          msg: "{{ db_rds.instance.endpoint }}"
+
+      #launching ec2 instances
+      - ec2:
+            key_name: "vpcKey"
+            region: eu-west-1
+            group_id: "{{ webapp_sg.group_id }}"
+            instance_type: t2.micro
+            image: "ami-0ee415e1b8b71305f"
+            wait: yes
+            wait_timeout: 500
+            count: 1 
+            vpc_subnet_id: "{{ PublicSubnet1.subnet.id }}"
+            state: "present"
+            aws_secret_key: "{{ aws_secret_key }}"    
+            aws_access_key: "{{ aws_access_key }}"
+            instance_tags:
+              Name: "wordpress"
+        register: ec2
+
+      - copy:
+            content: "{{ ec2.instances[0].public_ip }}"
+            dest: "/myinventory/hosts.txt"
+
+#Configure our ec2 instances for wordpress installation
+- hosts: all
+  gather_facts: false
+  vars_promt:
+    - name: "db_host"
+      prompt: "Enter your hostname of db?"
+  vars:
+    - s:
+        - httpd
+        - php-mysqlnd
+        - php-fpm
+  tasks:
+    - package:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ s }}"
+    - command: "amazon-linux-extras install php7.3 -y"
+    #download wordpress file in zip format
+    - get_url: 
+          url: "https://wordpress.org/latest.tar.gz"
+          dest: "/wordpress.tar.gz"
+    #extract zip file
+    - unarchive:
+        src: "/wordpress.tar.gz"
+        dest: "/var/www/html"
+        remote_src: yes
+    #pass in template file
+    - template:
+        src: "wp-config.php"
+        dest: "/var/www/html/wordpress/wp-config.php"
+    - service:
+        name: httpd
+        state: started
+
+
