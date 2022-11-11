@@ -1,19 +1,19 @@
 #create vpc
 - hosts: localhost
-	gather_facts: false
-	vars_files: vars.yml
-	tasks:
-    - ec2_vpc_net:
-	      name: 3Tvpc
-        cidr_block: 10.0.0.0/16
-        region: eu-west-1
-        tags:
-          name: 3Tvpc
+  gather_facts: false
+  vars_files: vars.yml
+  tasks:
+   - ec2_vpc_net:
+      name: 3Tvpc
+      cidr_block: 10.0.0.0/16
+      region: eu-west-1
+      tags:
+        name: 3Tvpc
         aws_secret_key: "{{ aws_secret_key }}"
         aws_access_key: "{{ aws_access_key }}"
       register: vpc
     #create public subnet
-    - ec2_vpc_subnet:
+   - ec2_vpc_subnet:
         state: present
         vpc_id: "{{ vpc.vpc.id }}"  
         az: eu-west-1a
@@ -24,9 +24,9 @@
         region: eu-west-1
         aws_secret_key: "{{ aws_secret_key }}"    
         aws_access_key: "{{ aws_access_key }}"
-      register: PublicSubnet1
+     register: PublicSubnet1
     #create private subnet
-    - ec2_vpc_subnet:
+   - ec2_vpc_subnet:
         state: present
         vpc_id: "{{ vpc.vpc.id }}"  
         az: eu-west-1b
@@ -37,10 +37,10 @@
         region: eu-west-1
         aws_secret_key: "{{ aws_secret_key }}"    
         aws_access_key: "{{ aws_access_key }}"
-      register: PrivateSubnet1
+     register: PrivateSubnet1
 
     #create internet gateway                    
-    - ec2_vpc_igw:
+   - ec2_vpc_igw:
         vpc_id: "{{ vpc.vpc.id }}"
         state: present
         tags:
@@ -48,10 +48,10 @@
         region: eu-west-1
         aws_secret_key: "{{ aws_secret_key }}"    
         aws_access_key: "{{ aws_access_key }}"
-      register: igw
+     register: igw
 
     #create route table for igw 
-    - ec2_vpc_route_table:
+   - ec2_vpc_route_table:
         vpc_id: "{{ vpc.vpc.id }}"
         tags:
             Name: rt_igw
@@ -59,26 +59,26 @@
             - "{{ PublicSubnet1.subnet.id }}"
         routes:
             - dest: 0.0.0.0/0
-            gateway_id: "{{ igw.gateway_id }}"
+        gateway_id: "{{ igw.gateway_id }}"
         region: eu-west-1
         aws_secret_key: "{{ aws_secret_key }}"    
         aws_access_key: "{{ aws_access_key }}"
-      register: route_table_igw
+     register: route_table_igw
 
     #create ec2 key pair so we can connect to instances
-    - ec2_key:
+   - ec2_key:
           name: vpcKey
           region: eu-west-1
           aws_secret_key: "{{ aws_secret_key }}"    
           aws_access_key: "{{ aws_access_key }}"
-      register: keypair
-    - copy:
+     register: keypair
+   - copy:
           content: "{{ keypair.key.private_key }}"
           dest: "vpcKey.pem"
-      when: keypair.changed == true 
+     when: keypair.changed == true 
 
     #create security groups for out Database
-    - ec2_group:
+   - ec2_group:
           name: DB_sg
           description: security group for RDS database
           vpc_id: "{{ vpc.vpc.id }}"
@@ -90,10 +90,10 @@
               ports:
                 - 3306
               cidr_ip: 10.0.0.0/16
-      register: db_sg
+     register: db_sg
 
     #create security group for webapp servers
-    - ec2_group:
+   - ec2_group:
         name: webapp_sg
         description: security group for webapp
         vpc_id: "{{ vpc.vpc.id }}"
@@ -109,10 +109,10 @@
             ports:
               - 22
             cidr_ip: 0.0.0.0/0
-      register: webapp_sg
+     register: webapp_sg
 
     #create DB subnet group
-    - rds_subnet_group:
+   - rds_subnet_group:
         state: present
         name: "db_subnet_gp"
         description: Subnet group for DB
@@ -122,10 +122,10 @@
         region: eu-west-1
         aws_secret_key: "{{ aws_secret_key }}"    
         aws_access_key: "{{ aws_access_key }}"
-      register: subnet_group
+     register: subnet_group
 
     #launching RDS in private subnet
-    - rds:
+   - rds:
         command: create
         instance_name: mysqlOS
         db_engine: MySQL
@@ -145,30 +145,30 @@
         region: eu-west-1
         aws_secret_key: "{{ aws_secret_key }}"    
         aws_access_key: "{{ aws_access_key }}"
-      register: db_rds
+     register: db_rds
 
-    - debug:
-        msg: "{{ db_rds.instance.endpoint }}"
+   - debug:
+         msg: "{{ db_rds.instance.endpoint }}"
 
     #launching ec2 instances
-    - ec2:
-          key_name: "vpcKey"
-          region: eu-west-1
-          group_id: "{{ webapp_sg.group_id }}"
-          instance_type: t2.micro
-          image: "ami-0ee415e1b8b71305f"
-          wait: yes
-          wait_timeout: 500
-          count: 1 
-          vpc_subnet_id: "{{ PublicSubnet1.subnet.id }}"
-          state: "present"
-          aws_secret_key: "{{ aws_secret_key }}"    
-          aws_access_key: "{{ aws_access_key }}"
-          instance_tags:
-            Name: "wordpress"
-      register: ec2
+   - ec2:
+       key_name: "vpcKey"
+       region: eu-west-1
+       group_id: "{{ webapp_sg.group_id }}"
+       instance_type: t2.micro
+       image: "ami-0ee415e1b8b71305f"
+       wait: yes
+       wait_timeout: 500
+       count: 1 
+       vpc_subnet_id: "{{ PublicSubnet1.subnet.id }}"
+       state: "present"
+       aws_secret_key: "{{ aws_secret_key }}"    
+       aws_access_key: "{{ aws_access_key }}"
+       instance_tags:
+       Name: "wordpress"
+     register: ec2
 
-    - copy:
+   - copy:
           content: "{{ ec2.instances[0].public_ip }}"
           dest: "/myinventory/hosts.txt"
 
@@ -205,5 +205,3 @@
     - service:
         name: httpd
         state: started
-
-
